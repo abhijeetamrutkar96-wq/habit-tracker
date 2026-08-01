@@ -379,6 +379,7 @@
     save(TODOS_KEY, todos);
     renderTodos();
     scheduleSync();
+    if (t.done) fireConfetti(50);
   }
 
   function deleteTodo(id) {
@@ -430,14 +431,17 @@
     const h = habits.find((x) => x.id === id);
     if (!h) return;
     const key = todayKey();
+    let justCompleted = false;
     if (h.log[key]) {
       delete h.log[key];
     } else {
       h.log[key] = true;
+      justCompleted = true;
     }
     save(STORAGE_KEY, habits);
     renderAll();
     scheduleSync();
+    if (justCompleted) fireConfetti(50);
   }
 
   function showToast(msg) {
@@ -455,7 +459,7 @@
     if (celebrated[key]) return;
     celebrated[key] = true;
     save(CELEBRATED_KEY, celebrated);
-    fireConfetti();
+    fireConfetti(140);
     showToast("🎉 All habits done for today. Amazing work!");
   }
 
@@ -669,49 +673,64 @@
   /* ---------------------------------------------------------
      Confetti (lightweight, no dependencies)
   --------------------------------------------------------- */
-  function fireConfetti() {
-    const canvas = $("#confettiCanvas");
-    canvas.style.display = "block";
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    const ctx = canvas.getContext("2d");
-    const colors = ["#7c5cff", "#ff7ab6", "#35d0a3", "#ffb84c", "#4cc9ff"];
-    const pieces = Array.from({ length: 140 }).map(() => ({
-      x: Math.random() * canvas.width,
-      y: -20 - Math.random() * canvas.height * 0.5,
-      w: 6 + Math.random() * 6,
-      h: 8 + Math.random() * 10,
-      color: colors[Math.floor(Math.random() * colors.length)],
-      speedY: 2 + Math.random() * 3,
-      speedX: -2 + Math.random() * 4,
-      rot: Math.random() * 360,
-      rotSpeed: -8 + Math.random() * 16,
-    }));
+  let confettiPieces = [];
+  let confettiRunning = false;
+  const CONFETTI_COLORS = ["#7c5cff", "#ff7ab6", "#35d0a3", "#ffb84c", "#4cc9ff"];
 
-    let frame = 0;
-    const maxFrames = 160;
-    function tick() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      pieces.forEach((p) => {
-        p.x += p.speedX;
-        p.y += p.speedY;
-        p.rot += p.rotSpeed;
-        ctx.save();
-        ctx.translate(p.x, p.y);
-        ctx.rotate((p.rot * Math.PI) / 180);
-        ctx.fillStyle = p.color;
-        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
-        ctx.restore();
-      });
-      frame++;
-      if (frame < maxFrames) {
-        requestAnimationFrame(tick);
-      } else {
-        canvas.style.display = "none";
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-      }
+  function fireConfetti(count = 70) {
+    const canvas = $("#confettiCanvas");
+    if (!confettiRunning) {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
     }
-    tick();
+    canvas.style.display = "block";
+
+    for (let i = 0; i < count; i++) {
+      confettiPieces.push({
+        x: Math.random() * canvas.width,
+        y: -20 - Math.random() * canvas.height * 0.4,
+        w: 6 + Math.random() * 6,
+        h: 8 + Math.random() * 10,
+        color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
+        speedY: 2 + Math.random() * 3,
+        speedX: -2 + Math.random() * 4,
+        rot: Math.random() * 360,
+        rotSpeed: -8 + Math.random() * 16,
+      });
+    }
+
+    if (!confettiRunning) {
+      confettiRunning = true;
+      requestAnimationFrame(confettiTick);
+    }
+  }
+
+  function confettiTick() {
+    const canvas = $("#confettiCanvas");
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    confettiPieces.forEach((p) => {
+      p.x += p.speedX;
+      p.y += p.speedY;
+      p.rot += p.rotSpeed;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate((p.rot * Math.PI) / 180);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      ctx.restore();
+    });
+
+    confettiPieces = confettiPieces.filter((p) => p.y < canvas.height + 30);
+
+    if (confettiPieces.length > 0) {
+      requestAnimationFrame(confettiTick);
+    } else {
+      confettiRunning = false;
+      canvas.style.display = "none";
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
   }
 
   /* ---------------------------------------------------------
