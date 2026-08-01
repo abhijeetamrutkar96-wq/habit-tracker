@@ -25,7 +25,10 @@
       <span class="brand-mark">✓</span>
       <span class="brand-name">Momentum</span>
     </div>
-    <button id="themeToggle" class="icon-btn" title="Toggle theme" aria-label="Toggle theme">🌙</button>
+    <div class="topbar-actions">
+      <button id="syncToggle" class="icon-btn" title="Sync settings" aria-label="Sync settings">☁️</button>
+      <button id="themeToggle" class="icon-btn" title="Toggle theme" aria-label="Toggle theme">🌙</button>
+    </div>
   </header>
 
   <main>
@@ -142,6 +145,34 @@
         <div class="spacer"></div>
         <button type="button" id="cancelModalBtn" class="btn-ghost">Cancel</button>
         <button type="submit" class="btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Sync Modal -->
+<div id="syncOverlay" class="modal-overlay" hidden>
+  <div class="modal card">
+    <h3>Sync across devices</h3>
+    <p class="sync-desc">Momentum can sync your habits between devices using a private GitHub Gist on your own account — free, no new sign-ups.</p>
+
+    <div id="syncStatus" class="sync-status"></div>
+
+    <form id="syncForm">
+      <label class="field">
+        <span>GitHub personal access token</span>
+        <input type="password" id="syncToken" placeholder="ghp_..." autocomplete="off" />
+      </label>
+      <p class="sync-hint">
+        Create a token scoped to <strong>gist</strong> only:
+        <a href="https://github.com/settings/tokens/new?scopes=gist&description=Momentum+Habit+Sync" target="_blank" rel="noopener">generate one here</a>,
+        then paste it above. Use the same token on every device you want synced.
+      </p>
+      <div class="modal-actions">
+        <button type="button" id="syncDisconnectBtn" class="btn-danger" hidden>Disconnect</button>
+        <div class="spacer"></div>
+        <button type="button" id="syncCancelBtn" class="btn-ghost">Close</button>
+        <button type="submit" class="btn-primary">Connect &amp; sync</button>
       </div>
     </form>
   </div>

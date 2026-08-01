@@ -8,6 +8,14 @@
   const THEME_KEY = "momentum_theme_v1";
   const CELEBRATED_KEY = "momentum_celebrated_v1";
   const MAX_STREAK_KEY = "momentum_max_streak_v1";
+  const DELETED_KEY = "momentum_deleted_v1";
+  const TOKEN_KEY = "momentum_gh_token_v1";
+  const LAST_SYNC_KEY = "momentum_last_sync_v1";
+
+  // Shared private Gist used as the sync backend. Any device with the
+  // matching personal access token can read/write this same file.
+  const GIST_ID = "d611c0d5184b7b95ddd13c60847d2c52";
+  const GIST_FILENAME = "momentum-data.json";
 
   const load = (key, fallback) => {
     try {
@@ -20,6 +28,7 @@
   const save = (key, val) => localStorage.setItem(key, JSON.stringify(val));
 
   let habits = load(STORAGE_KEY, []);
+  let deletedIds = load(DELETED_KEY, {});
 
   /* ---------------------------------------------------------
      Date helpers
@@ -323,6 +332,7 @@
     }
     save(STORAGE_KEY, habits);
     renderAll();
+    scheduleSync();
   }
 
   function showToast(msg) {
@@ -447,6 +457,7 @@
       h.emoji = selectedEmoji;
       h.color = selectedColor;
       h.days = [...selectedDays];
+      h.updatedAt = Date.now();
     } else {
       habits.push({
         id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
@@ -455,21 +466,26 @@
         color: selectedColor,
         days: [...selectedDays],
         createdAt: todayKey(),
+        updatedAt: Date.now(),
         log: {},
       });
     }
     save(STORAGE_KEY, habits);
     closeModal();
     renderAll();
+    scheduleSync();
   });
 
   $("#deleteHabitBtn").addEventListener("click", () => {
     if (!editingId) return;
     if (!confirm("Delete this habit? This can't be undone.")) return;
     habits = habits.filter((x) => x.id !== editingId);
+    deletedIds[editingId] = Date.now();
     save(STORAGE_KEY, habits);
+    save(DELETED_KEY, deletedIds);
     closeModal();
     renderAll();
+    scheduleSync();
   });
 
   $("#cancelModalBtn").addEventListener("click", closeModal);
@@ -514,6 +530,7 @@
           save(STORAGE_KEY, habits);
           renderAll();
           showToast("Import successful");
+          scheduleSync();
         } else {
           showToast("Invalid file");
         }
@@ -527,11 +544,15 @@
 
   $("#resetBtn").addEventListener("click", () => {
     if (!confirm("This will permanently delete all habits and history. Continue?")) return;
+    const now = Date.now();
+    habits.forEach((h) => { deletedIds[h.id] = now; });
     habits = [];
     save(STORAGE_KEY, habits);
+    save(DELETED_KEY, deletedIds);
     localStorage.removeItem(CELEBRATED_KEY);
     localStorage.removeItem(MAX_STREAK_KEY);
     renderAll();
+    scheduleSync();
   });
 
   /* ---------------------------------------------------------
@@ -583,6 +604,172 @@
   }
 
   /* ---------------------------------------------------------
+     Cross-device sync (private GitHub Gist)
+  --------------------------------------------------------- */
+  const syncOverlay = $("#syncOverlay");
+  const syncStatusEl = $("#syncStatus");
+  let syncInFlight = false;
+  let syncQueued = false;
+  let syncDebounceTimer = null;
+
+  function getToken() {
+    return load(TOKEN_KEY, "");
+  }
+
+  async function fetchRemote(token) {
+    const res = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+      headers: {
+        Authorization: `token ${token}`,
+        Accept: "application/vnd.github+json",
+      },
+    });
+    if (!res.ok) throw new Error(res.status === 401 ? "Invalid token" : `GitHub error ${res.status}`);
+    const gist = await res.json();
+    const raw = gist.files && gist.files[GIST_FILENAME] && gist.files[GIST_FILENAME].content;
+    if (!raw) return { habits: [], deletedIds: {}, updatedAt: 0 };
+    try {
+      const parsed = JSON.parse(raw);
+      return {
+        habits: Array.isArray(parsed.habits) ? parsed.habits : [],
+        deletedIds: parsed.deletedIds || {},
+        updatedAt: parsed.updatedAt || 0,
+      };
+    } catch {
+      return { habits: [], deletedIds: {}, updatedAt: 0 };
+    }
+  }
+
+  async function pushRemote(token, data) {
+    const res = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `token ${token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ files: { [GIST_FILENAME]: { content: JSON.stringify(data) } } }),
+    });
+    if (!res.ok) throw new Error(res.status === 401 ? "Invalid token" : `GitHub error ${res.status}`);
+  }
+
+  // Merges two data sets without ever losing a completed check-in:
+  // habit logs are unioned, metadata conflicts resolved by most-recent edit,
+  // and deletions propagate via timestamped tombstones.
+  function mergeData(local, remote) {
+    const mergedDeleted = { ...remote.deletedIds };
+    for (const [id, ts] of Object.entries(local.deletedIds)) {
+      mergedDeleted[id] = Math.max(mergedDeleted[id] || 0, ts);
+    }
+
+    const byId = new Map();
+    for (const h of remote.habits) byId.set(h.id, h);
+    for (const h of local.habits) {
+      const existing = byId.get(h.id);
+      if (!existing) {
+        byId.set(h.id, h);
+        continue;
+      }
+      const newer = (h.updatedAt || 0) >= (existing.updatedAt || 0) ? h : existing;
+      byId.set(h.id, {
+        ...newer,
+        log: { ...existing.log, ...h.log },
+      });
+    }
+
+    const merged = [...byId.values()].filter((h) => {
+      const deletedAt = mergedDeleted[h.id];
+      return !deletedAt || deletedAt < (h.updatedAt || 0);
+    });
+    merged.sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+
+    return { habits: merged, deletedIds: mergedDeleted, updatedAt: Date.now() };
+  }
+
+  function setSyncStatus(text, kind) {
+    syncStatusEl.textContent = text;
+    syncStatusEl.className = `sync-status ${kind || ""}`;
+  }
+
+  function refreshSyncStatusDisplay() {
+    const token = getToken();
+    $("#syncDisconnectBtn").hidden = !token;
+    $("#syncToken").value = token || "";
+    $("#syncToggle").textContent = token ? "☁️" : "☁️";
+    $("#syncToggle").style.opacity = token ? "1" : "0.6";
+    if (!token) {
+      setSyncStatus("Not connected — data stays on this device only.");
+      return;
+    }
+    const last = load(LAST_SYNC_KEY, null);
+    setSyncStatus(last ? `Connected — last synced ${new Date(last).toLocaleTimeString()}` : "Connected — syncing…", "connected");
+  }
+
+  function scheduleSync() {
+    if (!getToken()) return;
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = setTimeout(doSync, 700);
+  }
+
+  async function doSync() {
+    const token = getToken();
+    if (!token) return;
+    if (syncInFlight) { syncQueued = true; return; }
+    syncInFlight = true;
+    try {
+      const remote = await fetchRemote(token);
+      const local = { habits, deletedIds };
+      const merged = mergeData(local, remote);
+
+      habits = merged.habits;
+      deletedIds = merged.deletedIds;
+      save(STORAGE_KEY, habits);
+      save(DELETED_KEY, deletedIds);
+
+      await pushRemote(token, merged);
+
+      save(LAST_SYNC_KEY, Date.now());
+      renderAll();
+      refreshSyncStatusDisplay();
+    } catch (err) {
+      setSyncStatus(err.message || "Sync failed", "error");
+    } finally {
+      syncInFlight = false;
+      if (syncQueued) {
+        syncQueued = false;
+        doSync();
+      }
+    }
+  }
+
+  $("#syncToggle").addEventListener("click", () => {
+    refreshSyncStatusDisplay();
+    syncOverlay.hidden = false;
+  });
+  $("#syncCancelBtn").addEventListener("click", () => { syncOverlay.hidden = true; });
+  syncOverlay.addEventListener("click", (e) => { if (e.target === syncOverlay) syncOverlay.hidden = true; });
+
+  $("#syncForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const token = $("#syncToken").value.trim();
+    if (!token) return;
+    save(TOKEN_KEY, token);
+    setSyncStatus("Connecting…");
+    await doSync();
+  });
+
+  $("#syncDisconnectBtn").addEventListener("click", () => {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(LAST_SYNC_KEY);
+    refreshSyncStatusDisplay();
+    showToast("Disconnected from sync");
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") scheduleSync();
+  });
+  window.addEventListener("focus", () => scheduleSync());
+
+  /* ---------------------------------------------------------
      Init
   --------------------------------------------------------- */
   function init() {
@@ -594,13 +781,12 @@
     applyTheme(savedTheme);
 
     renderAll();
+    refreshSyncStatusDisplay();
+    if (getToken()) doSync();
 
     // refresh at midnight rollover / periodically while app stays open
     setInterval(renderAll, 60 * 1000);
-
-    if ("serviceWorker" in navigator) {
-      // no-op placeholder, keep app installable without a network dependency
-    }
+    setInterval(() => scheduleSync(), 30 * 1000);
   }
 
   init();
