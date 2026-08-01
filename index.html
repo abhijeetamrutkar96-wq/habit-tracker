@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Momentum — Habit Tracker</title>
+<meta name="theme-color" content="#7c5cff" />
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect rx='22' width='100' height='100' fill='%237c5cff'/%3E%3Ctext x='50' y='68' font-size='58' text-anchor='middle' fill='white' font-family='Arial'%3E%E2%9C%93%3C/text%3E%3C/svg%3E" />
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect rx='22' width='100' height='100' fill='%237c5cff'/%3E%3Ctext x='50' y='68' font-size='58' text-anchor='middle' fill='white' font-family='Arial'%3E%E2%9C%93%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="bg-glow"></div>
+
+<div class="app">
+
+  <!-- Header -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">✓</span>
+      <span class="brand-name">Momentum</span>
+    </div>
+    <button id="themeToggle" class="icon-btn" title="Toggle theme" aria-label="Toggle theme">🌙</button>
+  </header>
+
+  <main>
+
+    <!-- Hero / Today progress -->
+    <section class="hero card">
+      <div class="hero-text">
+        <p class="hero-date" id="todayDate">—</p>
+        <h1 class="hero-greeting" id="greeting">Hello 👋</h1>
+        <p class="hero-quote" id="quote">Loading your motivation…</p>
+      </div>
+      <div class="ring-wrap">
+        <svg viewBox="0 0 120 120" class="ring">
+          <circle cx="60" cy="60" r="52" class="ring-bg"></circle>
+          <circle cx="60" cy="60" r="52" class="ring-fg" id="ringFg"></circle>
+        </svg>
+        <div class="ring-label">
+          <span id="ringPercent">0%</span>
+          <small>today</small>
+        </div>
+      </div>
+    </section>
+
+    <!-- Stats strip -->
+    <section class="stats-strip">
+      <div class="stat-pill">
+        <span class="stat-num" id="statStreak">0</span>
+        <span class="stat-label">🔥 Best streak</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-num" id="statDone">0</span>
+        <span class="stat-label">✅ Done today</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-num" id="statTotal">0</span>
+        <span class="stat-label">📈 Total check-ins</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-num" id="statPerfect">0</span>
+        <span class="stat-label">⭐ Perfect days</span>
+      </div>
+    </section>
+
+    <!-- Habits list -->
+    <section class="section">
+      <div class="section-head">
+        <h2>Today's habits</h2>
+        <button id="addHabitBtn" class="btn-primary">+ Add habit</button>
+      </div>
+      <div id="habitList" class="habit-list"></div>
+      <div id="emptyState" class="empty-state" hidden>
+        <p>✨ No habits yet</p>
+        <span>Tap "Add habit" to start building momentum.</span>
+      </div>
+    </section>
+
+    <!-- Weekly overview -->
+    <section class="section">
+      <div class="section-head">
+        <h2>This week</h2>
+      </div>
+      <div class="card week-card">
+        <div id="weekGrid" class="week-grid"></div>
+      </div>
+    </section>
+
+    <!-- Badges -->
+    <section class="section">
+      <div class="section-head">
+        <h2>Badges</h2>
+      </div>
+      <div id="badgeGrid" class="badge-grid"></div>
+    </section>
+
+    <footer class="footer">
+      <button id="exportBtn" class="link-btn">Export data</button>
+      <span>·</span>
+      <label class="link-btn" for="importInput">Import data</label>
+      <input type="file" id="importInput" accept="application/json" hidden />
+      <span>·</span>
+      <button id="resetBtn" class="link-btn danger">Reset all</button>
+    </footer>
+
+  </main>
+</div>
+
+<!-- Add/Edit Habit Modal -->
+<div id="modalOverlay" class="modal-overlay" hidden>
+  <div class="modal card">
+    <h3 id="modalTitle">New habit</h3>
+    <form id="habitForm">
+      <label class="field">
+        <span>Name</span>
+        <input type="text" id="habitName" maxlength="40" placeholder="e.g. Drink water" required />
+      </label>
+
+      <label class="field">
+        <span>Icon</span>
+        <div id="emojiPicker" class="emoji-picker"></div>
+      </label>
+
+      <label class="field">
+        <span>Color</span>
+        <div id="colorPicker" class="color-picker"></div>
+      </label>
+
+      <label class="field">
+        <span>Repeat on</span>
+        <div id="dayPicker" class="day-picker"></div>
+      </label>
+
+      <div class="modal-actions">
+        <button type="button" id="deleteHabitBtn" class="btn-danger" hidden>Delete</button>
+        <div class="spacer"></div>
+        <button type="button" id="cancelModalBtn" class="btn-ghost">Cancel</button>
+        <button type="submit" class="btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Celebration overlay -->
+<canvas id="confettiCanvas"></canvas>
+<div id="toast" class="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
