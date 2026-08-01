@@ -308,7 +308,25 @@
     });
   }
 
+  const TODO_EXPIRY_MS = 24 * 60 * 60 * 1000;
+
+  function purgeExpiredTodos() {
+    const now = Date.now();
+    const before = todos.length;
+    todos = todos.filter((t) => {
+      const expired = t.done && t.completedAt && now - t.completedAt > TODO_EXPIRY_MS;
+      if (expired) deletedTodoIds[t.id] = now;
+      return !expired;
+    });
+    if (todos.length !== before) {
+      save(TODOS_KEY, todos);
+      save(DELETED_TODOS_KEY, deletedTodoIds);
+      scheduleSync();
+    }
+  }
+
   function renderTodos() {
+    purgeExpiredTodos();
     const listEl = $("#todoList");
     const emptyEl = $("#todoEmptyState");
     const countEl = $("#todoCount");
@@ -328,13 +346,21 @@
       return (a.createdAt || 0) - (b.createdAt || 0);
     });
 
-    listEl.innerHTML = sorted.map((t) => `
+    listEl.innerHTML = sorted.map((t) => {
+      let hint = "";
+      if (t.done && t.completedAt) {
+        const hoursLeft = Math.max(0, Math.ceil((TODO_EXPIRY_MS - (Date.now() - t.completedAt)) / 3600000));
+        hint = `<span class="todo-expiry">clears in ${hoursLeft}h</span>`;
+      }
+      return `
       <div class="todo-item card ${t.done ? "done" : ""}">
         <button class="todo-check ${t.done ? "done" : ""}" data-todo-toggle="${t.id}" aria-label="Toggle to-do">${t.done ? "✓" : ""}</button>
         <span class="todo-text">${escapeHtml(t.text)}</span>
+        ${hint}
         <button class="todo-delete" data-todo-delete="${t.id}" aria-label="Delete to-do">✕</button>
       </div>
-    `).join("");
+    `;
+    }).join("");
 
     listEl.querySelectorAll("[data-todo-toggle]").forEach((btn) => {
       btn.addEventListener("click", () => toggleTodo(btn.dataset.todoToggle));
@@ -348,6 +374,7 @@
     const t = todos.find((x) => x.id === id);
     if (!t) return;
     t.done = !t.done;
+    t.completedAt = t.done ? Date.now() : null;
     t.updatedAt = Date.now();
     save(TODOS_KEY, todos);
     renderTodos();
