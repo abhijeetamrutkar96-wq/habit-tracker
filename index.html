@@ -85,6 +85,23 @@
       </div>
     </section>
 
+    <!-- To-Dos -->
+    <section class="section">
+      <div class="section-head">
+        <h2>To-Dos</h2>
+        <span id="todoCount" class="todo-count"></span>
+      </div>
+      <form id="todoForm" class="todo-add card">
+        <input type="text" id="todoInput" maxlength="140" placeholder="Add a to-do…" autocomplete="off" />
+        <button type="submit" class="btn-primary">Add</button>
+      </form>
+      <div id="todoList" class="todo-list"></div>
+      <div id="todoEmptyState" class="empty-state" hidden>
+        <p>📝 Nothing on your list</p>
+        <span>Add a one-off task above — these don't affect your habit streaks.</span>
+      </div>
+    </section>
+
     <!-- Weekly overview -->
     <section class="section">
       <div class="section-head">

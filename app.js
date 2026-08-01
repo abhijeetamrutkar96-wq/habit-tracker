@@ -11,6 +11,8 @@
   const DELETED_KEY = "momentum_deleted_v1";
   const TOKEN_KEY = "momentum_gh_token_v1";
   const LAST_SYNC_KEY = "momentum_last_sync_v1";
+  const TODOS_KEY = "momentum_todos_v1";
+  const DELETED_TODOS_KEY = "momentum_deleted_todos_v1";
 
   // Shared private Gist used as the sync backend. Any device with the
   // matching personal access token can read/write this same file.
@@ -29,6 +31,8 @@
 
   let habits = load(STORAGE_KEY, []);
   let deletedIds = load(DELETED_KEY, {});
+  let todos = load(TODOS_KEY, []);
+  let deletedTodoIds = load(DELETED_TODOS_KEY, {});
 
   /* ---------------------------------------------------------
      Date helpers
@@ -304,10 +308,84 @@
     });
   }
 
+  function renderTodos() {
+    const listEl = $("#todoList");
+    const emptyEl = $("#todoEmptyState");
+    const countEl = $("#todoCount");
+
+    const remaining = todos.filter((t) => !t.done).length;
+    countEl.textContent = todos.length ? `${remaining} remaining` : "";
+
+    if (todos.length === 0) {
+      listEl.innerHTML = "";
+      emptyEl.hidden = false;
+      return;
+    }
+    emptyEl.hidden = true;
+
+    const sorted = [...todos].sort((a, b) => {
+      if (a.done !== b.done) return a.done ? 1 : -1;
+      return (a.createdAt || 0) - (b.createdAt || 0);
+    });
+
+    listEl.innerHTML = sorted.map((t) => `
+      <div class="todo-item card ${t.done ? "done" : ""}">
+        <button class="todo-check ${t.done ? "done" : ""}" data-todo-toggle="${t.id}" aria-label="Toggle to-do">${t.done ? "✓" : ""}</button>
+        <span class="todo-text">${escapeHtml(t.text)}</span>
+        <button class="todo-delete" data-todo-delete="${t.id}" aria-label="Delete to-do">✕</button>
+      </div>
+    `).join("");
+
+    listEl.querySelectorAll("[data-todo-toggle]").forEach((btn) => {
+      btn.addEventListener("click", () => toggleTodo(btn.dataset.todoToggle));
+    });
+    listEl.querySelectorAll("[data-todo-delete]").forEach((btn) => {
+      btn.addEventListener("click", () => deleteTodo(btn.dataset.todoDelete));
+    });
+  }
+
+  function toggleTodo(id) {
+    const t = todos.find((x) => x.id === id);
+    if (!t) return;
+    t.done = !t.done;
+    t.updatedAt = Date.now();
+    save(TODOS_KEY, todos);
+    renderTodos();
+    scheduleSync();
+  }
+
+  function deleteTodo(id) {
+    todos = todos.filter((x) => x.id !== id);
+    deletedTodoIds[id] = Date.now();
+    save(TODOS_KEY, todos);
+    save(DELETED_TODOS_KEY, deletedTodoIds);
+    renderTodos();
+    scheduleSync();
+  }
+
+  $("#todoForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const input = $("#todoInput");
+    const text = input.value.trim();
+    if (!text) return;
+    todos.push({
+      id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
+      text,
+      done: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    save(TODOS_KEY, todos);
+    input.value = "";
+    renderTodos();
+    scheduleSync();
+  });
+
   function renderAll() {
     renderHero();
     renderStats();
     renderHabitList();
+    renderTodos();
     renderWeek();
     renderBadges();
   }
@@ -509,7 +587,7 @@
      Export / Import / Reset
   --------------------------------------------------------- */
   $("#exportBtn").addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify({ habits, exportedAt: new Date().toISOString() }, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify({ habits, todos, exportedAt: new Date().toISOString() }, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -527,7 +605,9 @@
         const data = JSON.parse(reader.result);
         if (Array.isArray(data.habits)) {
           habits = data.habits;
+          todos = Array.isArray(data.todos) ? data.todos : [];
           save(STORAGE_KEY, habits);
+          save(TODOS_KEY, todos);
           renderAll();
           showToast("Import successful");
           scheduleSync();
@@ -543,12 +623,16 @@
   });
 
   $("#resetBtn").addEventListener("click", () => {
-    if (!confirm("This will permanently delete all habits and history. Continue?")) return;
+    if (!confirm("This will permanently delete all habits, to-dos, and history. Continue?")) return;
     const now = Date.now();
     habits.forEach((h) => { deletedIds[h.id] = now; });
+    todos.forEach((t) => { deletedTodoIds[t.id] = now; });
     habits = [];
+    todos = [];
     save(STORAGE_KEY, habits);
     save(DELETED_KEY, deletedIds);
+    save(TODOS_KEY, todos);
+    save(DELETED_TODOS_KEY, deletedTodoIds);
     localStorage.removeItem(CELEBRATED_KEY);
     localStorage.removeItem(MAX_STREAK_KEY);
     renderAll();
@@ -626,16 +710,19 @@
     if (!res.ok) throw new Error(res.status === 401 ? "Invalid token" : `GitHub error ${res.status}`);
     const gist = await res.json();
     const raw = gist.files && gist.files[GIST_FILENAME] && gist.files[GIST_FILENAME].content;
-    if (!raw) return { habits: [], deletedIds: {}, updatedAt: 0 };
+    const empty = { habits: [], deletedIds: {}, todos: [], deletedTodoIds: {}, updatedAt: 0 };
+    if (!raw) return empty;
     try {
       const parsed = JSON.parse(raw);
       return {
         habits: Array.isArray(parsed.habits) ? parsed.habits : [],
         deletedIds: parsed.deletedIds || {},
+        todos: Array.isArray(parsed.todos) ? parsed.todos : [],
+        deletedTodoIds: parsed.deletedTodoIds || {},
         updatedAt: parsed.updatedAt || 0,
       };
     } catch {
-      return { habits: [], deletedIds: {}, updatedAt: 0 };
+      return empty;
     }
   }
 
@@ -682,7 +769,29 @@
     });
     merged.sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
 
-    return { habits: merged, deletedIds: mergedDeleted, updatedAt: Date.now() };
+    const mergedDeletedTodos = { ...remote.deletedTodoIds };
+    for (const [id, ts] of Object.entries(local.deletedTodoIds)) {
+      mergedDeletedTodos[id] = Math.max(mergedDeletedTodos[id] || 0, ts);
+    }
+
+    const todosById = new Map();
+    for (const t of remote.todos) todosById.set(t.id, t);
+    for (const t of local.todos) {
+      const existing = todosById.get(t.id);
+      todosById.set(t.id, !existing || (t.updatedAt || 0) >= (existing.updatedAt || 0) ? t : existing);
+    }
+    const mergedTodos = [...todosById.values()].filter((t) => {
+      const deletedAt = mergedDeletedTodos[t.id];
+      return !deletedAt || deletedAt < (t.updatedAt || 0);
+    });
+
+    return {
+      habits: merged,
+      deletedIds: mergedDeleted,
+      todos: mergedTodos,
+      deletedTodoIds: mergedDeletedTodos,
+      updatedAt: Date.now(),
+    };
   }
 
   function setSyncStatus(text, kind) {
@@ -717,13 +826,17 @@
     syncInFlight = true;
     try {
       const remote = await fetchRemote(token);
-      const local = { habits, deletedIds };
+      const local = { habits, deletedIds, todos, deletedTodoIds };
       const merged = mergeData(local, remote);
 
       habits = merged.habits;
       deletedIds = merged.deletedIds;
+      todos = merged.todos;
+      deletedTodoIds = merged.deletedTodoIds;
       save(STORAGE_KEY, habits);
       save(DELETED_KEY, deletedIds);
+      save(TODOS_KEY, todos);
+      save(DELETED_TODOS_KEY, deletedTodoIds);
 
       await pushRemote(token, merged);
 

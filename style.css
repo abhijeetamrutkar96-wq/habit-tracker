@@ -344,6 +344,82 @@ body {
 .empty-state p { font-size: 16px; font-weight: 700; margin: 0 0 4px; color: var(--text); }
 .empty-state span { font-size: 13px; }
 
+.todo-count {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
+.todo-add {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+.todo-add input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 10px 12px;
+  font-size: 14.5px;
+  color: var(--text);
+  font-family: inherit;
+}
+.todo-add input:focus { outline: none; }
+.todo-add .btn-primary { flex: none; padding: 10px 18px; }
+
+.todo-list { display: flex; flex-direction: column; gap: 8px; }
+
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+}
+
+.todo-check {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  border: 2px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  color: white;
+  font-size: 14px;
+  transition: all .15s ease;
+}
+.todo-check.done {
+  background: linear-gradient(135deg, var(--accent), #9b7bff);
+  border-color: transparent;
+}
+
+.todo-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  word-break: break-word;
+}
+.todo-item.done .todo-text {
+  text-decoration: line-through;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.todo-delete {
+  flex: none;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 6px;
+}
+
 .week-card { padding: 18px; }
 .week-grid {
   display: grid;
