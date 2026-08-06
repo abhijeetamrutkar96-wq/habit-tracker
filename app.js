@@ -44,6 +44,11 @@
   const DAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"];
   const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+  function parseKey(key) {
+    const [y, m, d] = key.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  }
+
   function daysAgo(n) {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
@@ -120,6 +125,48 @@
       cursor.setDate(cursor.getDate() - 1);
     }
     return streak;
+  }
+
+  function longestStreakForHabit(habit) {
+    const start = parseKey(habit.createdAt);
+    const end = new Date();
+    end.setHours(0, 0, 0, 0);
+    let run = 0;
+    let max = 0;
+    for (let cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
+      if (!isScheduled(habit, cursor)) continue;
+      if (isDone(habit, toKey(cursor))) {
+        run++;
+        max = Math.max(max, run);
+      } else {
+        run = 0;
+      }
+    }
+    return max;
+  }
+
+  function totalCheckinsForHabit(habit) {
+    return Object.values(habit.log).filter(Boolean).length;
+  }
+
+  // stats for a given calendar month (0-indexed month)
+  function monthStats(habit, year, month) {
+    const firstOfMonth = new Date(year, month, 1);
+    const lastOfMonth = new Date(year, month + 1, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const rangeStart = firstOfMonth > parseKey(habit.createdAt) ? firstOfMonth : parseKey(habit.createdAt);
+    const rangeEnd = lastOfMonth < today ? lastOfMonth : today;
+
+    let scheduled = 0;
+    let done = 0;
+    for (let cursor = new Date(rangeStart); cursor <= rangeEnd; cursor.setDate(cursor.getDate() + 1)) {
+      if (!isScheduled(habit, cursor)) continue;
+      scheduled++;
+      if (isDone(habit, toKey(cursor))) done++;
+    }
+    const pct = scheduled ? Math.round((done / scheduled) * 100) : 0;
+    return { scheduled, done, pct };
   }
 
   function totalCheckins() {
@@ -228,9 +275,10 @@
       const dotsHtml = Array.from({ length: 7 }).map((_, i) => {
         const d = daysAgo(6 - i);
         const dKey = toKey(d);
-        const filled = isScheduled(h, d) && isDone(h, dKey);
+        const filled = isDone(h, dKey);
         const isToday = dKey === key;
-        return `<span class="habit-dot ${filled ? "filled" : ""} ${isToday ? "today-outline" : ""}"></span>`;
+        const dimScheduled = !isScheduled(h, d);
+        return `<button type="button" class="habit-dot ${filled ? "filled" : ""} ${isToday ? "today-outline" : ""} ${dimScheduled ? "unscheduled" : ""}" data-dot-toggle="${h.id}" data-dot-date="${dKey}" title="${d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}" aria-label="Toggle ${dKey}"></button>`;
       }).join("");
 
       card.innerHTML = `
@@ -242,7 +290,8 @@
           </div>
           <div class="habit-dots">${dotsHtml}</div>
         </div>
-        <button class="habit-edit-btn" data-edit="${h.id}" aria-label="Edit habit">✎</button>
+        <button class="habit-icon-btn" data-stats="${h.id}" aria-label="View stats">📊</button>
+        <button class="habit-icon-btn" data-edit="${h.id}" aria-label="Edit habit">✎</button>
         <button class="check-btn ${done ? "done" : ""}" data-toggle="${h.id}" ${scheduled ? "" : "disabled"} aria-label="Mark done">
           ${done ? "✓" : ""}
         </button>
@@ -255,6 +304,12 @@
     });
     habitListEl.querySelectorAll("[data-edit]").forEach((btn) => {
       btn.addEventListener("click", () => openModal(btn.dataset.edit));
+    });
+    habitListEl.querySelectorAll("[data-stats]").forEach((btn) => {
+      btn.addEventListener("click", () => openStatsModal(btn.dataset.stats));
+    });
+    habitListEl.querySelectorAll("[data-dot-toggle]").forEach((btn) => {
+      btn.addEventListener("click", () => toggleHabitDate(btn.dataset.dotToggle, btn.dataset.dotDate));
     });
   }
 
@@ -428,20 +483,25 @@
      Actions
   --------------------------------------------------------- */
   function toggleHabit(id) {
+    toggleHabitDate(id, todayKey());
+  }
+
+  function toggleHabitDate(id, dateKey) {
     const h = habits.find((x) => x.id === id);
     if (!h) return;
-    const key = todayKey();
+    if (dateKey > todayKey()) return; // can't mark future days
+
     let justCompleted = false;
-    if (h.log[key]) {
-      delete h.log[key];
+    if (h.log[dateKey]) {
+      delete h.log[dateKey];
     } else {
-      h.log[key] = true;
+      h.log[dateKey] = true;
       justCompleted = true;
     }
     save(STORAGE_KEY, habits);
     renderAll();
     scheduleSync();
-    if (justCompleted) fireConfetti(50);
+    if (justCompleted && dateKey === todayKey()) fireConfetti(50);
   }
 
   function showToast(msg) {
@@ -600,6 +660,99 @@
   $("#cancelModalBtn").addEventListener("click", closeModal);
   overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
   $("#addHabitBtn").addEventListener("click", () => openModal(null));
+
+  /* ---------------------------------------------------------
+     Habit Stats Modal (monthly view)
+  --------------------------------------------------------- */
+  const statsOverlay = $("#statsOverlay");
+  let statsHabitId = null;
+  let statsViewDate = new Date(); // any date within the viewed month
+
+  function openStatsModal(id) {
+    statsHabitId = id;
+    statsViewDate = new Date();
+    statsOverlay.hidden = false;
+    renderStatsModal();
+  }
+
+  function closeStatsModal() {
+    statsOverlay.hidden = true;
+    statsHabitId = null;
+  }
+
+  function motivationLine(pct) {
+    if (pct >= 90) return "Incredible consistency! 🔥";
+    if (pct >= 70) return "Great momentum, keep going 💪";
+    if (pct >= 40) return "You're building the habit — stay with it 🌱";
+    if (pct > 0) return "Every check-in counts. Keep showing up ✨";
+    return "This month is a fresh page — start today ✨";
+  }
+
+  function renderStatsModal() {
+    const h = habits.find((x) => x.id === statsHabitId);
+    if (!h) { closeStatsModal(); return; }
+
+    $("#statsEmoji").textContent = h.emoji;
+    $("#statsEmoji").style.background = `${h.color}22`;
+    $("#statsEmoji").style.color = h.color;
+    $("#statsName").textContent = h.name;
+
+    const year = statsViewDate.getFullYear();
+    const month = statsViewDate.getMonth();
+    $("#statsMonthLabel").textContent = statsViewDate.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
+    $("#statsNextMonth").disabled = isCurrentMonth;
+
+    // calendar grid
+    const firstOfMonth = new Date(year, month, 1);
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const leadingBlanks = dayOfWeek(firstOfMonth);
+    const createdAt = parseKey(h.createdAt);
+
+    let cellsHtml = "";
+    for (let i = 0; i < leadingBlanks; i++) {
+      cellsHtml += `<div class="cal-cell empty"></div>`;
+    }
+    for (let day = 1; day <= daysInMonth; day++) {
+      const d = new Date(year, month, day);
+      const dKey = toKey(d);
+      const isFuture = d > today;
+      const beforeCreation = d < createdAt;
+      const done = isDone(h, dKey);
+      const scheduled = isScheduled(h, d);
+      const isToday = dKey === todayKey();
+      const disabled = isFuture || beforeCreation;
+      cellsHtml += `<button type="button" class="cal-cell ${done ? "done" : ""} ${!scheduled && !done ? "unscheduled" : ""} ${isToday ? "today" : ""}" data-cal-date="${dKey}" ${disabled ? "disabled" : ""}>${day}</button>`;
+    }
+    $("#statsCalendar").innerHTML = cellsHtml;
+    $("#statsCalendar").querySelectorAll("[data-cal-date]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        toggleHabitDate(h.id, btn.dataset.calDate);
+        renderStatsModal();
+      });
+    });
+
+    const ms = monthStats(h, year, month);
+    $("#statsMonthPct").textContent = `${ms.pct}%`;
+    $("#statsMotivation").textContent = motivationLine(ms.pct);
+    $("#statsCurrentStreak").textContent = currentStreak(h);
+    $("#statsLongestStreak").textContent = longestStreakForHabit(h);
+    $("#statsTotalDone").textContent = totalCheckinsForHabit(h);
+  }
+
+  $("#statsPrevMonth").addEventListener("click", () => {
+    statsViewDate = new Date(statsViewDate.getFullYear(), statsViewDate.getMonth() - 1, 1);
+    renderStatsModal();
+  });
+  $("#statsNextMonth").addEventListener("click", () => {
+    statsViewDate = new Date(statsViewDate.getFullYear(), statsViewDate.getMonth() + 1, 1);
+    renderStatsModal();
+  });
+  $("#statsCloseBtn").addEventListener("click", closeStatsModal);
+  statsOverlay.addEventListener("click", (e) => { if (e.target === statsOverlay) closeStatsModal(); });
 
   /* ---------------------------------------------------------
      Theme

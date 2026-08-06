@@ -167,6 +167,53 @@
   </div>
 </div>
 
+<!-- Habit Stats Modal -->
+<div id="statsOverlay" class="modal-overlay" hidden>
+  <div class="modal card">
+    <div class="stats-header">
+      <span id="statsEmoji" class="stats-emoji"></span>
+      <h3 id="statsName"></h3>
+    </div>
+
+    <div class="month-nav">
+      <button type="button" id="statsPrevMonth" class="icon-btn" aria-label="Previous month">‹</button>
+      <span id="statsMonthLabel" class="month-label"></span>
+      <button type="button" id="statsNextMonth" class="icon-btn" aria-label="Next month">›</button>
+    </div>
+
+    <div class="calendar-weekdays">
+      <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span>
+    </div>
+    <div id="statsCalendar" class="calendar-grid"></div>
+
+    <p id="statsMotivation" class="stats-motivation"></p>
+
+    <div class="stats-grid">
+      <div class="stats-tile">
+        <span id="statsMonthPct" class="stats-tile-num">0%</span>
+        <span class="stats-tile-label">This month</span>
+      </div>
+      <div class="stats-tile">
+        <span id="statsCurrentStreak" class="stats-tile-num">0</span>
+        <span class="stats-tile-label">🔥 Current streak</span>
+      </div>
+      <div class="stats-tile">
+        <span id="statsLongestStreak" class="stats-tile-num">0</span>
+        <span class="stats-tile-label">🏆 Longest streak</span>
+      </div>
+      <div class="stats-tile">
+        <span id="statsTotalDone" class="stats-tile-num">0</span>
+        <span class="stats-tile-label">✅ Total completions</span>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <div class="spacer"></div>
+      <button type="button" id="statsCloseBtn" class="btn-ghost">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Sync Modal -->
 <div id="syncOverlay" class="modal-overlay" hidden>
   <div class="modal card">
