@@ -170,7 +170,9 @@
   }
 
   function totalCheckins() {
-    return habits.reduce((sum, h) => sum + Object.values(h.log).filter(Boolean).length, 0);
+    const habitCheckins = habits.reduce((sum, h) => sum + Object.values(h.log).filter(Boolean).length, 0);
+    const todoCheckins = todos.filter((t) => t.done).length;
+    return habitCheckins + todoCheckins;
   }
 
   function scheduledToday() {
