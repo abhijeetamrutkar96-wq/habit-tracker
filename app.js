@@ -13,6 +13,9 @@
   const LAST_SYNC_KEY = "momentum_last_sync_v1";
   const TODOS_KEY = "momentum_todos_v1";
   const DELETED_TODOS_KEY = "momentum_deleted_todos_v1";
+  // Lifetime tally of to-dos ever completed. Kept separate from the todos list
+  // so the count survives auto-expiry and manual deletion of finished items.
+  const TODO_COMPLETIONS_KEY = "momentum_todo_completions_v1";
 
   // Shared private Gist used as the sync backend. Any device with the
   // matching personal access token can read/write this same file.
@@ -33,6 +36,13 @@
   let deletedIds = load(DELETED_KEY, {});
   let todos = load(TODOS_KEY, []);
   let deletedTodoIds = load(DELETED_TODOS_KEY, {});
+  // Seed from the to-dos already marked done so upgrading doesn't drop the count.
+  let forceTodoCompletionsReset = false;
+  let todoCompletions = load(TODO_COMPLETIONS_KEY, null);
+  if (todoCompletions === null) {
+    todoCompletions = todos.filter((t) => t.done).length;
+    save(TODO_COMPLETIONS_KEY, todoCompletions);
+  }
 
   /* ---------------------------------------------------------
      Date helpers
@@ -171,8 +181,7 @@
 
   function totalCheckins() {
     const habitCheckins = habits.reduce((sum, h) => sum + Object.values(h.log).filter(Boolean).length, 0);
-    const todoCheckins = todos.filter((t) => t.done).length;
-    return habitCheckins + todoCheckins;
+    return habitCheckins + todoCompletions;
   }
 
   function scheduledToday() {
@@ -433,8 +442,15 @@
     t.done = !t.done;
     t.completedAt = t.done ? Date.now() : null;
     t.updatedAt = Date.now();
+
+    // Completing adds to the lifetime tally; un-checking is an undo so it
+    // rolls back. Deleting or auto-expiring a done item leaves the tally alone.
+    todoCompletions = Math.max(0, todoCompletions + (t.done ? 1 : -1));
+    save(TODO_COMPLETIONS_KEY, todoCompletions);
+
     save(TODOS_KEY, todos);
     renderTodos();
+    renderStats();
     scheduleSync();
     if (t.done) fireConfetti(50);
   }
@@ -819,6 +835,11 @@
     save(DELETED_KEY, deletedIds);
     save(TODOS_KEY, todos);
     save(DELETED_TODOS_KEY, deletedTodoIds);
+    todoCompletions = 0;
+    save(TODO_COMPLETIONS_KEY, todoCompletions);
+    // A deliberate wipe must beat the usual monotonic merge, otherwise the
+    // remote tally would flow straight back in on the next sync.
+    forceTodoCompletionsReset = true;
     localStorage.removeItem(CELEBRATED_KEY);
     localStorage.removeItem(MAX_STREAK_KEY);
     renderAll();
@@ -911,7 +932,7 @@
     if (!res.ok) throw new Error(res.status === 401 ? "Invalid token" : `GitHub error ${res.status}`);
     const gist = await res.json();
     const raw = gist.files && gist.files[GIST_FILENAME] && gist.files[GIST_FILENAME].content;
-    const empty = { habits: [], deletedIds: {}, todos: [], deletedTodoIds: {}, updatedAt: 0 };
+    const empty = { habits: [], deletedIds: {}, todos: [], deletedTodoIds: {}, todoCompletions: 0, updatedAt: 0 };
     if (!raw) return empty;
     try {
       const parsed = JSON.parse(raw);
@@ -920,6 +941,7 @@
         deletedIds: parsed.deletedIds || {},
         todos: Array.isArray(parsed.todos) ? parsed.todos : [],
         deletedTodoIds: parsed.deletedTodoIds || {},
+        todoCompletions: parsed.todoCompletions || 0,
         updatedAt: parsed.updatedAt || 0,
       };
     } catch {
@@ -991,6 +1013,11 @@
       deletedIds: mergedDeleted,
       todos: mergedTodos,
       deletedTodoIds: mergedDeletedTodos,
+      // Monotonic tally — take the higher of the two so a stale device can't
+      // roll the lifetime count backwards, unless this device just reset.
+      todoCompletions: forceTodoCompletionsReset
+        ? (local.todoCompletions || 0)
+        : Math.max(local.todoCompletions || 0, remote.todoCompletions || 0),
       updatedAt: Date.now(),
     };
   }
@@ -1027,19 +1054,22 @@
     syncInFlight = true;
     try {
       const remote = await fetchRemote(token);
-      const local = { habits, deletedIds, todos, deletedTodoIds };
+      const local = { habits, deletedIds, todos, deletedTodoIds, todoCompletions };
       const merged = mergeData(local, remote);
 
       habits = merged.habits;
       deletedIds = merged.deletedIds;
       todos = merged.todos;
       deletedTodoIds = merged.deletedTodoIds;
+      todoCompletions = merged.todoCompletions;
       save(STORAGE_KEY, habits);
       save(DELETED_KEY, deletedIds);
       save(TODOS_KEY, todos);
       save(DELETED_TODOS_KEY, deletedTodoIds);
+      save(TODO_COMPLETIONS_KEY, todoCompletions);
 
       await pushRemote(token, merged);
+      forceTodoCompletionsReset = false;
 
       save(LAST_SYNC_KEY, Date.now());
       renderAll();
