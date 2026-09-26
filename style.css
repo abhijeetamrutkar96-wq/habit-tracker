@@ -179,6 +179,12 @@ body {
   transition: stroke-dashoffset .6s cubic-bezier(.4,0,.2,1), stroke .3s ease;
 }
 
+.ring-wrap.complete { animation: ringGlowPulse 2.4s ease-in-out infinite; }
+@keyframes ringGlowPulse {
+  0%, 100% { filter: drop-shadow(0 0 0 rgba(53, 208, 163, 0)); }
+  50% { filter: drop-shadow(0 0 10px rgba(53, 208, 163, .55)); }
+}
+
 .ring-label {
   position: absolute;
   inset: 0;
@@ -269,6 +275,19 @@ body {
   border-radius: var(--radius-md);
   cursor: default;
 }
+.habit-card.just-completed { animation: cardPulse .7s ease-out; }
+@keyframes cardPulse {
+  0% { box-shadow: 0 0 0 0 var(--glow, rgba(124, 92, 255, .45)); }
+  70% { box-shadow: 0 0 0 14px rgba(124, 92, 255, 0); }
+  100% { box-shadow: var(--shadow); }
+}
+
+@keyframes popBounce {
+  0% { transform: scale(1) rotate(0deg); }
+  35% { transform: scale(1.35) rotate(-8deg); }
+  60% { transform: scale(0.92) rotate(4deg); }
+  100% { transform: scale(1.05) rotate(0deg); }
+}
 
 .habit-emoji {
   width: 46px;
@@ -295,6 +314,11 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.streak-hot { animation: flameFlicker 1.8s ease-in-out infinite; }
+@keyframes flameFlicker {
+  0%, 100% { filter: drop-shadow(0 0 0 rgba(255, 140, 0, 0)); }
+  50% { filter: drop-shadow(0 0 4px rgba(255, 140, 0, .65)); }
 }
 
 .habit-dots { display: flex; gap: 6px; margin-top: 6px; }
@@ -332,6 +356,7 @@ body {
   transform: scale(1.05);
 }
 .check-btn:active { transform: scale(0.85); }
+.check-btn.just-completed { animation: popBounce .5s cubic-bezier(.34, 1.56, .64, 1); }
 
 .habit-icon-btn {
   flex: none;
@@ -399,6 +424,7 @@ body {
   font-size: 14px;
   transition: all .15s ease;
 }
+.todo-check.just-completed { animation: popBounce .45s cubic-bezier(.34, 1.56, .64, 1); }
 .todo-check.done {
   background: linear-gradient(135deg, var(--accent), #9b7bff);
   border-color: transparent;
@@ -471,6 +497,12 @@ body {
   transition: all .3s ease;
 }
 .badge.unlocked { opacity: 1; filter: none; }
+.badge.badge-unlock-flash { animation: badgeUnlock .6s cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes badgeUnlock {
+  0% { transform: scale(0.6) rotate(-8deg); opacity: 0; }
+  60% { transform: scale(1.15) rotate(4deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0deg); }
+}
 .badge-icon { font-size: 24px; display: block; margin-bottom: 6px; }
 .badge-name { font-size: 10.5px; font-weight: 700; }
 
