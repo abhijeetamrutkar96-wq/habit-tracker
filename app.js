@@ -16,6 +16,9 @@
   // Lifetime tally of to-dos ever completed. Kept separate from the todos list
   // so the count survives auto-expiry and manual deletion of finished items.
   const TODO_COMPLETIONS_KEY = "momentum_todo_completions_v1";
+  // Which badge unlocks the user has already been celebrated for, so we only
+  // throw confetti the moment a badge is newly earned, not on every render.
+  const SEEN_BADGES_KEY = "momentum_seen_badges_v1";
 
   // Shared private Gist used as the sync backend. Any device with the
   // matching personal access token can read/write this same file.
@@ -43,6 +46,12 @@
     todoCompletions = todos.filter((t) => t.done).length;
     save(TODO_COMPLETIONS_KEY, todoCompletions);
   }
+  let seenBadges = load(SEEN_BADGES_KEY, null);
+
+  // Transient one-shot markers: set right before a render, consumed by that
+  // render to attach a "just completed" animation class, then cleared.
+  let celebrateHabitId = null;
+  let celebrateTodoId = null;
 
   /* ---------------------------------------------------------
      Date helpers
@@ -103,6 +112,39 @@
     { id: "b60", days: 60, icon: "💎", name: "60 Day Diamond" },
     { id: "b100", days: 100, icon: "👑", name: "Century Club" },
   ];
+
+  const HABIT_PRAISE = [
+    "Nice work! 🎉",
+    "Crushing it! 💪",
+    "That's the way! ✨",
+    "Keep the momentum going 🔥",
+    "You showed up — that's everything 🌟",
+    "Boom, done! 🙌",
+    "Look at you go! 🚀",
+    "Small step, big win 🌱",
+  ];
+  const HABIT_STREAK_PRAISE = {
+    3: "3 days strong — you're building something 🔥",
+    7: "One full week! 🔥🔥",
+    14: "Two weeks in — this is a habit now ⚡",
+    21: "21 days — it's officially part of you 🌟",
+    30: "30 days! Certified champion 🏆",
+    60: "60 days of showing up 💎",
+    100: "100 DAYS. Legendary. 👑",
+  };
+  const TODO_PRAISE = [
+    "One less thing to worry about ✅",
+    "Nice, knocked that out 💪",
+    "Cleared! ✨",
+    "Todo list getting lighter 🎈",
+  ];
+
+  function praiseForStreak(streak) {
+    return HABIT_STREAK_PRAISE[streak] || HABIT_PRAISE[Math.floor(Math.random() * HABIT_PRAISE.length)];
+  }
+  function praiseForTodo() {
+    return TODO_PRAISE[Math.floor(Math.random() * TODO_PRAISE.length)];
+  }
 
   /* ---------------------------------------------------------
      Habit logic
@@ -247,10 +289,13 @@
     $("#ringPercent").textContent = `${pct}%`;
 
     const ringFg = $("#ringFg");
+    const ringWrap = $("#ringWrap");
     if (pct >= 100 && scheduled.length > 0) {
       ringFg.style.stroke = "#35d0a3";
+      ringWrap.classList.add("complete");
     } else {
       ringFg.style.stroke = "#7c5cff";
+      ringWrap.classList.remove("complete");
     }
 
     maybeCelebrate(pct, scheduled.length);
@@ -278,10 +323,12 @@
       const scheduled = isScheduled(h, now);
       const done = isDone(h, key);
       const streak = currentStreak(h);
+      const justCompleted = h.id === celebrateHabitId;
 
       const card = document.createElement("div");
-      card.className = "habit-card card";
+      card.className = `habit-card card ${justCompleted ? "just-completed" : ""}`;
       card.style.opacity = scheduled ? "1" : "0.55";
+      card.style.setProperty("--glow", `${h.color}73`);
 
       const dotsHtml = Array.from({ length: 7 }).map((_, i) => {
         const d = daysAgo(6 - i);
@@ -297,13 +344,13 @@
         <div class="habit-info">
           <p class="habit-name">${escapeHtml(h.name)}</p>
           <div class="habit-meta">
-            ${streak > 0 ? `<span>🔥 ${streak} day${streak === 1 ? "" : "s"}</span>` : `<span>${scheduled ? "Let's start today" : "Not scheduled today"}</span>`}
+            ${streak > 0 ? `<span class="${streak >= 3 ? "streak-hot" : ""}">🔥 ${streak} day${streak === 1 ? "" : "s"}</span>` : `<span>${scheduled ? "Let's start today" : "Not scheduled today"}</span>`}
           </div>
           <div class="habit-dots">${dotsHtml}</div>
         </div>
         <button class="habit-icon-btn" data-stats="${h.id}" aria-label="View stats">📊</button>
         <button class="habit-icon-btn" data-edit="${h.id}" aria-label="Edit habit">✎</button>
-        <button class="check-btn ${done ? "done" : ""}" data-toggle="${h.id}" ${scheduled ? "" : "disabled"} aria-label="Mark done">
+        <button class="check-btn ${done ? "done" : ""} ${justCompleted ? "just-completed" : ""}" data-toggle="${h.id}" ${scheduled ? "" : "disabled"} aria-label="Mark done">
           ${done ? "✓" : ""}
         </button>
       `;
@@ -364,14 +411,34 @@
     const effectiveMax = Math.max(maxEver, currentBest);
     if (effectiveMax > maxEver) save(MAX_STREAK_KEY, effectiveMax);
 
+    // First run after this feature shipped: mark whatever's already unlocked
+    // as "seen" so existing streaks don't all fire the celebration at once.
+    if (seenBadges === null) {
+      seenBadges = {};
+      BADGES.forEach((b) => { if (effectiveMax >= b.days) seenBadges[b.id] = true; });
+      save(SEEN_BADGES_KEY, seenBadges);
+    }
+
+    const newlyUnlocked = [];
     badgeGridEl.innerHTML = "";
     BADGES.forEach((b) => {
       const unlocked = effectiveMax >= b.days;
+      const isNew = unlocked && !seenBadges[b.id];
+      if (isNew) {
+        seenBadges[b.id] = true;
+        newlyUnlocked.push(b);
+      }
       const el = document.createElement("div");
-      el.className = `badge ${unlocked ? "unlocked" : ""}`;
+      el.className = `badge ${unlocked ? "unlocked" : ""} ${isNew ? "badge-unlock-flash" : ""}`;
       el.innerHTML = `<span class="badge-icon">${b.icon}</span><span class="badge-name">${b.name}</span>`;
       badgeGridEl.appendChild(el);
     });
+
+    if (newlyUnlocked.length) {
+      save(SEEN_BADGES_KEY, seenBadges);
+      newlyUnlocked.forEach((b) => showToast(`🏆 New badge unlocked: ${b.name}!`));
+      fireConfetti(90);
+    }
   }
 
   const TODO_EXPIRY_MS = 24 * 60 * 60 * 1000;
@@ -418,9 +485,10 @@
         const hoursLeft = Math.max(0, Math.ceil((TODO_EXPIRY_MS - (Date.now() - t.completedAt)) / 3600000));
         hint = `<span class="todo-expiry">clears in ${hoursLeft}h</span>`;
       }
+      const justCompleted = t.id === celebrateTodoId;
       return `
-      <div class="todo-item card ${t.done ? "done" : ""}">
-        <button class="todo-check ${t.done ? "done" : ""}" data-todo-toggle="${t.id}" aria-label="Toggle to-do">${t.done ? "✓" : ""}</button>
+      <div class="todo-item card ${t.done ? "done" : ""} ${justCompleted ? "just-completed" : ""}">
+        <button class="todo-check ${t.done ? "done" : ""} ${justCompleted ? "just-completed" : ""}" data-todo-toggle="${t.id}" aria-label="Toggle to-do">${t.done ? "✓" : ""}</button>
         <span class="todo-text">${escapeHtml(t.text)}</span>
         ${hint}
         <button class="todo-delete" data-todo-delete="${t.id}" aria-label="Delete to-do">✕</button>
@@ -449,10 +517,17 @@
     save(TODO_COMPLETIONS_KEY, todoCompletions);
 
     save(TODOS_KEY, todos);
+
+    if (t.done) celebrateTodoId = id;
     renderTodos();
+    celebrateTodoId = null;
+
     renderStats();
     scheduleSync();
-    if (t.done) fireConfetti(50);
+    if (t.done) {
+      fireConfetti(50);
+      showToast(praiseForTodo());
+    }
   }
 
   function deleteTodo(id) {
@@ -517,17 +592,45 @@
       justCompleted = true;
     }
     save(STORAGE_KEY, habits);
+
+    const celebrateToday = justCompleted && dateKey === todayKey();
+    if (celebrateToday) celebrateHabitId = id;
     renderAll();
+    celebrateHabitId = null;
+
     scheduleSync();
-    if (justCompleted && dateKey === todayKey()) fireConfetti(50);
+    if (celebrateToday) {
+      fireConfetti(50);
+      showToast(praiseForStreak(currentStreak(h)));
+    }
   }
 
+  // Small queue so a habit-praise toast, an "all done" toast, and a badge
+  // unlock toast triggered in the same tick show one after another instead of
+  // clobbering each other.
+  let toastQueue = [];
+  let toastShowing = false;
+
   function showToast(msg) {
+    if (toastQueue.length >= 4) return; // avoid pile-ups from rapid taps
+    toastQueue.push(msg);
+    processToastQueue();
+  }
+
+  function processToastQueue() {
+    if (toastShowing || toastQueue.length === 0) return;
+    toastShowing = true;
+    const msg = toastQueue.shift();
     const t = $("#toast");
     t.textContent = msg;
     t.classList.add("show");
-    clearTimeout(showToast._timer);
-    showToast._timer = setTimeout(() => t.classList.remove("show"), 2600);
+    setTimeout(() => {
+      t.classList.remove("show");
+      setTimeout(() => {
+        toastShowing = false;
+        processToastQueue();
+      }, 300);
+    }, 2000);
   }
 
   function maybeCelebrate(pct, scheduledCount) {
@@ -842,6 +945,8 @@
     forceTodoCompletionsReset = true;
     localStorage.removeItem(CELEBRATED_KEY);
     localStorage.removeItem(MAX_STREAK_KEY);
+    seenBadges = {};
+    save(SEEN_BADGES_KEY, seenBadges);
     renderAll();
     scheduleSync();
   });
