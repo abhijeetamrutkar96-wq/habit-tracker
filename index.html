@@ -17,7 +17,7 @@
 
 <div class="bg-glow"></div>
 
-<div class="app">
+<div class="app" style="display:none">
 
   <!-- Header -->
   <header class="topbar">
@@ -26,6 +26,7 @@
       <span class="brand-name">Momentum</span>
     </div>
     <div class="topbar-actions">
+      <button id="usersToggle" class="icon-btn" title="Manage users on this device" aria-label="Manage users on this device" hidden>👥</button>
       <button id="syncToggle" class="icon-btn" title="Sync settings" aria-label="Sync settings">☁️</button>
       <button id="themeToggle" class="icon-btn" title="Toggle theme" aria-label="Toggle theme">🌙</button>
     </div>
@@ -121,12 +122,16 @@
     </section>
 
     <footer class="footer">
+      <span id="currentUserLabel"></span>
+      <span>·</span>
       <button id="exportBtn" class="link-btn">Export data</button>
       <span>·</span>
       <label class="link-btn" for="importInput">Import data</label>
       <input type="file" id="importInput" accept="application/json" hidden />
       <span>·</span>
       <button id="resetBtn" class="link-btn danger">Reset all</button>
+      <span>·</span>
+      <button id="logoutBtn" class="link-btn">Log out</button>
     </footer>
 
   </main>
@@ -239,6 +244,60 @@
         <button type="submit" class="btn-primary">Connect &amp; sync</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- Manage Users Modal (admin only) -->
+<div id="usersOverlay" class="modal-overlay" hidden>
+  <div class="modal card">
+    <h3>Manage users on this device</h3>
+    <p class="sync-desc">This only pre-creates a login for someone sharing <em>this</em> device with you — their habit data stays completely separate from yours. If they have their own phone, they should just open the app there and use "Set up your account" instead.</p>
+
+    <div id="usersList" class="users-list"></div>
+
+    <form id="newUserForm">
+      <label class="field">
+        <span>New username</span>
+        <input type="text" id="newUsername" maxlength="30" placeholder="e.g. priya" autocomplete="off" required />
+      </label>
+      <label class="field">
+        <span>New password</span>
+        <input type="password" id="newPassword" placeholder="Choose a password" autocomplete="new-password" required />
+      </label>
+      <p id="newUsersError" class="auth-error"></p>
+      <div class="modal-actions">
+        <div class="spacer"></div>
+        <button type="button" id="usersCancelBtn" class="btn-ghost">Close</button>
+        <button type="submit" class="btn-primary">Add user</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Auth screen -->
+<div id="authScreen" class="auth-screen" hidden>
+  <div class="auth-card card">
+    <div class="brand auth-brand">
+      <span class="brand-mark">✓</span>
+      <span class="brand-name">Momentum</span>
+    </div>
+    <h2 id="authHeading">Log in</h2>
+    <p id="authOnboardingNote" class="sync-desc" hidden>
+      This is a fresh device, so you're setting up the first account here. Your existing habit data will carry over automatically.
+    </p>
+    <form id="authForm">
+      <label class="field">
+        <span>Username</span>
+        <input type="text" id="authUsername" maxlength="30" autocomplete="username" required />
+      </label>
+      <label class="field">
+        <span>Password</span>
+        <input type="password" id="authPassword" autocomplete="current-password" required />
+      </label>
+      <p id="authError" class="auth-error"></p>
+      <button type="submit" id="authSubmitBtn" class="btn-primary auth-submit" data-label="Log in">Log in</button>
+    </form>
+    <p class="auth-footnote">This is a simple password gate between people who already trust each other — not bank-grade security.</p>
   </div>
 </div>
 
