@@ -19,34 +19,88 @@
   // Which badge unlocks the user has already been celebrated for, so we only
   // throw confetti the moment a badge is newly earned, not on every render.
   const SEEN_BADGES_KEY = "momentum_seen_badges_v1";
+  // Which private gist this specific user's habit data syncs to (each user
+  // gets their own, so two people never overwrite each other's habits).
+  const SYNC_GIST_KEY = "momentum_sync_gist_id_v1";
 
-  // Shared private Gist used as the sync backend. Any device with the
-  // matching personal access token can read/write this same file.
+  // Records which logged-in user this device belongs to right now. Device-
+  // level, not scoped to a user, since it's what *determines* the user.
+  const CURRENT_USER_KEY = "momentum_current_user_v1";
+
+  // Original private Gist used as the sync backend before multi-user support
+  // existed. Kept as the admin's gist for continuity; anyone else who
+  // connects sync later gets a fresh private gist created under their own
+  // GitHub account (see ensureSyncGistId).
   const GIST_ID = "d611c0d5184b7b95ddd13c60847d2c52";
   const GIST_FILENAME = "momentum-data.json";
 
+  // Keys whose values differ per logged-in user. Everything else (theme,
+  // which user is currently logged in) is shared by the device itself.
+  const USER_SCOPED_KEYS = new Set([
+    STORAGE_KEY, DELETED_KEY, TODOS_KEY, DELETED_TODOS_KEY,
+    TODO_COMPLETIONS_KEY, SEEN_BADGES_KEY, CELEBRATED_KEY,
+    MAX_STREAK_KEY, TOKEN_KEY, LAST_SYNC_KEY, SYNC_GIST_KEY,
+  ]);
+
+  let currentUser = null; // { username, role: "admin" | "user" }
+
+  function resolveKey(key) {
+    return currentUser && USER_SCOPED_KEYS.has(key) ? `${key}::${currentUser.username}` : key;
+  }
+
   const load = (key, fallback) => {
     try {
-      const raw = localStorage.getItem(key);
+      const raw = localStorage.getItem(resolveKey(key));
       return raw ? JSON.parse(raw) : fallback;
     } catch {
       return fallback;
     }
   };
-  const save = (key, val) => localStorage.setItem(key, JSON.stringify(val));
+  const save = (key, val) => localStorage.setItem(resolveKey(key), JSON.stringify(val));
+  const removeKey = (key) => localStorage.removeItem(resolveKey(key));
 
-  let habits = load(STORAGE_KEY, []);
-  let deletedIds = load(DELETED_KEY, {});
-  let todos = load(TODOS_KEY, []);
-  let deletedTodoIds = load(DELETED_TODOS_KEY, {});
-  // Seed from the to-dos already marked done so upgrading doesn't drop the count.
+  let habits = [];
+  let deletedIds = {};
+  let todos = [];
+  let deletedTodoIds = {};
   let forceTodoCompletionsReset = false;
-  let todoCompletions = load(TODO_COMPLETIONS_KEY, null);
-  if (todoCompletions === null) {
-    todoCompletions = todos.filter((t) => t.done).length;
-    save(TODO_COMPLETIONS_KEY, todoCompletions);
+  let todoCompletions = 0;
+  let seenBadges = null;
+
+  // Populates all per-user state from localStorage. Must only run once
+  // `currentUser` is set, so keys resolve into that user's own namespace.
+  function loadUserData() {
+    habits = load(STORAGE_KEY, []);
+    deletedIds = load(DELETED_KEY, {});
+    todos = load(TODOS_KEY, []);
+    deletedTodoIds = load(DELETED_TODOS_KEY, {});
+    // Seed from the to-dos already marked done so upgrading doesn't drop the count.
+    todoCompletions = load(TODO_COMPLETIONS_KEY, null);
+    if (todoCompletions === null) {
+      todoCompletions = todos.filter((t) => t.done).length;
+      save(TODO_COMPLETIONS_KEY, todoCompletions);
+    }
+    seenBadges = load(SEEN_BADGES_KEY, null);
   }
-  let seenBadges = load(SEEN_BADGES_KEY, null);
+
+  // Copies this device's pre-multi-user data (unnamespaced legacy keys) into
+  // the new admin account's namespace. Copies rather than deletes the legacy
+  // keys, so nothing is lost if anything here needs to be re-run.
+  function migrateLegacyDataTo(username) {
+    const savedUser = currentUser;
+    currentUser = { username, role: "admin" };
+    USER_SCOPED_KEYS.forEach((key) => {
+      const legacyVal = localStorage.getItem(key);
+      const newKey = resolveKey(key);
+      if (legacyVal !== null && localStorage.getItem(newKey) === null) {
+        localStorage.setItem(newKey, legacyVal);
+      }
+    });
+    // The admin keeps using the original shared-history gist; everyone else
+    // gets a fresh one the first time they connect sync.
+    if (load(SYNC_GIST_KEY, null) === null) save(SYNC_GIST_KEY, GIST_ID);
+    currentUser = savedUser;
+  }
 
   // Transient one-shot markers: set right before a render, consumed by that
   // render to attach a "just completed" animation class, then cleared.
@@ -943,8 +997,8 @@
     // A deliberate wipe must beat the usual monotonic merge, otherwise the
     // remote tally would flow straight back in on the next sync.
     forceTodoCompletionsReset = true;
-    localStorage.removeItem(CELEBRATED_KEY);
-    localStorage.removeItem(MAX_STREAK_KEY);
+    removeKey(CELEBRATED_KEY);
+    removeKey(MAX_STREAK_KEY);
     seenBadges = {};
     save(SEEN_BADGES_KEY, seenBadges);
     renderAll();
@@ -1027,8 +1081,40 @@
     return load(TOKEN_KEY, "");
   }
 
-  async function fetchRemote(token) {
-    const res = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+  // Each user syncs to their own private gist. The admin keeps using the
+  // original gist for continuity; anyone else gets a fresh one created under
+  // their own GitHub account the first time they connect, so two users' data
+  // never lands in the same place.
+  async function ensureSyncGistId(token) {
+    const existing = load(SYNC_GIST_KEY, null);
+    if (existing) return existing;
+    const gistId = currentUser && currentUser.role === "admin" ? GIST_ID : await createPersonalSyncGist(token);
+    save(SYNC_GIST_KEY, gistId);
+    return gistId;
+  }
+
+  async function createPersonalSyncGist(token) {
+    const empty = { habits: [], deletedIds: {}, todos: [], deletedTodoIds: {}, todoCompletions: 0, updatedAt: 0 };
+    const res = await fetch("https://api.github.com/gists", {
+      method: "POST",
+      headers: {
+        Authorization: `token ${token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        description: "Momentum Habit Tracker data (private, do not share)",
+        public: false,
+        files: { [GIST_FILENAME]: { content: JSON.stringify(empty) } },
+      }),
+    });
+    if (!res.ok) throw new Error(res.status === 401 ? "Invalid token" : `Couldn't create your private sync storage (${res.status})`);
+    const gist = await res.json();
+    return gist.id;
+  }
+
+  async function fetchRemote(token, gistId) {
+    const res = await fetch(`https://api.github.com/gists/${gistId}`, {
       headers: {
         Authorization: `token ${token}`,
         Accept: "application/vnd.github+json",
@@ -1054,8 +1140,8 @@
     }
   }
 
-  async function pushRemote(token, data) {
-    const res = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+  async function pushRemote(token, gistId, data) {
+    const res = await fetch(`https://api.github.com/gists/${gistId}`, {
       method: "PATCH",
       headers: {
         Authorization: `token ${token}`,
@@ -1158,7 +1244,8 @@
     if (syncInFlight) { syncQueued = true; return; }
     syncInFlight = true;
     try {
-      const remote = await fetchRemote(token);
+      const gistId = await ensureSyncGistId(token);
+      const remote = await fetchRemote(token, gistId);
       const local = { habits, deletedIds, todos, deletedTodoIds, todoCompletions };
       const merged = mergeData(local, remote);
 
@@ -1173,7 +1260,7 @@
       save(DELETED_TODOS_KEY, deletedTodoIds);
       save(TODO_COMPLETIONS_KEY, todoCompletions);
 
-      await pushRemote(token, merged);
+      await pushRemote(token, gistId, merged);
       forceTodoCompletionsReset = false;
 
       save(LAST_SYNC_KEY, Date.now());
@@ -1207,8 +1294,8 @@
   });
 
   $("#syncDisconnectBtn").addEventListener("click", () => {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(LAST_SYNC_KEY);
+    removeKey(TOKEN_KEY);
+    removeKey(LAST_SYNC_KEY);
     refreshSyncStatusDisplay();
     showToast("Disconnected from sync");
   });
@@ -1219,9 +1306,177 @@
   window.addEventListener("focus", () => scheduleSync());
 
   /* ---------------------------------------------------------
+     Authentication — purely local, per-device accounts. This is a simple
+     gate (see the note in the auth screen), not real security: everything
+     lives in this browser's localStorage and nothing is ever sent over the
+     network. Each device manages its own small list of accounts, so two
+     people on two separate phones never share, see, or transmit each
+     other's credentials — there's no shared server or directory at all.
+  --------------------------------------------------------- */
+  const LOCAL_USERS_KEY = "momentum_local_users_v1"; // device-level, not user-scoped
+
+  const authScreen = $("#authScreen");
+  const appRoot = document.querySelector(".app");
+
+  function toHex(bytes) {
+    return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function sha256Hex(str) {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+    return toHex(new Uint8Array(buf));
+  }
+
+  function randomSalt() {
+    return toHex(crypto.getRandomValues(new Uint8Array(16)));
+  }
+
+  async function hashPassword(password, salt) {
+    return sha256Hex(`${salt}:${password}`);
+  }
+
+  function getLocalUsers() {
+    return load(LOCAL_USERS_KEY, []);
+  }
+  function saveLocalUsers(users) {
+    save(LOCAL_USERS_KEY, users);
+  }
+
+  function setAuthError(msg) {
+    $("#authError").textContent = msg || "";
+  }
+
+  function setAuthBusy(busy) {
+    $("#authSubmitBtn").disabled = busy;
+    $("#authSubmitBtn").textContent = busy ? "Please wait…" : $("#authSubmitBtn").dataset.label;
+  }
+
+  function showAuthScreen(isOnboarding) {
+    authScreen.hidden = false;
+    appRoot.style.display = "none";
+    $("#authOnboardingNote").hidden = !isOnboarding;
+    $("#authHeading").textContent = isOnboarding ? "Set up your account" : "Log in";
+    $("#authSubmitBtn").dataset.label = isOnboarding ? "Create account" : "Log in";
+    $("#authSubmitBtn").textContent = $("#authSubmitBtn").dataset.label;
+    authScreen.dataset.onboarding = isOnboarding ? "1" : "0";
+    setAuthError("");
+  }
+
+  function hideAuthScreen() {
+    authScreen.hidden = true;
+    appRoot.style.display = "";
+  }
+
+  $("#authForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const username = $("#authUsername").value.trim();
+    const password = $("#authPassword").value;
+    if (!username || !password) return;
+    const isOnboarding = authScreen.dataset.onboarding === "1";
+
+    setAuthBusy(true);
+    setAuthError("");
+    try {
+      const users = getLocalUsers();
+
+      if (isOnboarding) {
+        if (users.length > 0) {
+          // Someone finished onboarding in another tab first — fall back to
+          // a normal login instead of creating a second admin account.
+          showAuthScreen(false);
+          setAuthBusy(false);
+          return;
+        }
+        const salt = randomSalt();
+        const hash = await hashPassword(password, salt);
+        users.push({ username, salt, hash, role: "admin" });
+        saveLocalUsers(users);
+
+        currentUser = { username, role: "admin" };
+        save(CURRENT_USER_KEY, currentUser);
+        migrateLegacyDataTo(username);
+        loadUserData();
+        hideAuthScreen();
+        startApp();
+      } else {
+        const match = users.find((u) => u.username.toLowerCase() === username.toLowerCase());
+        if (!match) {
+          setAuthError("No account with that username on this device.");
+          setAuthBusy(false);
+          return;
+        }
+        const hash = await hashPassword(password, match.salt);
+        if (hash !== match.hash) {
+          setAuthError("Incorrect password.");
+          setAuthBusy(false);
+          return;
+        }
+        currentUser = { username: match.username, role: match.role };
+        save(CURRENT_USER_KEY, currentUser);
+        loadUserData();
+        hideAuthScreen();
+        startApp();
+      }
+    } catch (err) {
+      setAuthError(err.message || "Something went wrong.");
+      setAuthBusy(false);
+    }
+  });
+
+  /* ---------------------------------------------------------
+     Manage users on this device (admin only). Purely local — this only
+     pre-creates a login for someone who'll use *this same* device/browser.
+     Someone on their own phone should just use the "Set up your account"
+     screen there instead; there's nothing to grant remotely.
+  --------------------------------------------------------- */
+  const usersOverlay = $("#usersOverlay");
+
+  function renderUsersList() {
+    const listEl = $("#usersList");
+    const users = getLocalUsers();
+    listEl.innerHTML = users.map((u) =>
+      `<div class="user-row"><span>${escapeHtml(u.username)}</span><span class="user-role">${u.role}</span></div>`
+    ).join("") || "<p class=\"sync-hint\">No users yet.</p>";
+  }
+
+  $("#usersToggle").addEventListener("click", () => {
+    usersOverlay.hidden = false;
+    $("#newUsersError").textContent = "";
+    renderUsersList();
+  });
+  $("#usersCancelBtn").addEventListener("click", () => { usersOverlay.hidden = true; });
+  usersOverlay.addEventListener("click", (e) => { if (e.target === usersOverlay) usersOverlay.hidden = true; });
+
+  $("#newUserForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const username = $("#newUsername").value.trim();
+    const password = $("#newPassword").value;
+    const errorEl = $("#newUsersError");
+    errorEl.textContent = "";
+    if (!username || !password) return;
+
+    const users = getLocalUsers();
+    if (users.some((u) => u.username.toLowerCase() === username.toLowerCase())) {
+      errorEl.textContent = "That username is already taken on this device.";
+      return;
+    }
+    const salt = randomSalt();
+    const hash = await hashPassword(password, salt);
+    users.push({ username, salt, hash, role: "user" });
+    saveLocalUsers(users);
+    $("#newUsername").value = "";
+    $("#newPassword").value = "";
+    showToast(`Added ${username} to this device.`);
+    renderUsersList();
+  });
+
+  /* ---------------------------------------------------------
      Init
   --------------------------------------------------------- */
-  function init() {
+  function startApp() {
+    $("#usersToggle").hidden = currentUser.role !== "admin";
+    $("#currentUserLabel").textContent = `👤 ${currentUser.username}`;
+
     buildEmojiPicker();
     buildColorPicker();
     buildDayPicker();
@@ -1238,5 +1493,23 @@
     setInterval(() => scheduleSync(), 30 * 1000);
   }
 
-  init();
+  $("#logoutBtn").addEventListener("click", () => {
+    localStorage.removeItem(CURRENT_USER_KEY);
+    location.reload();
+  });
+
+  function boot() {
+    const users = getLocalUsers();
+    const saved = load(CURRENT_USER_KEY, null);
+    if (saved && users.some((u) => u.username === saved.username)) {
+      currentUser = saved;
+      loadUserData();
+      hideAuthScreen();
+      startApp();
+      return;
+    }
+    showAuthScreen(users.length === 0);
+  }
+
+  boot();
 })();
