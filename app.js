@@ -953,7 +953,6 @@
     const firstOfMonth = new Date(year, month, 1);
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const leadingBlanks = dayOfWeek(firstOfMonth);
-    const createdAt = parseKey(h.createdAt);
 
     let cellsHtml = "";
     for (let i = 0; i < leadingBlanks; i++) {
@@ -963,12 +962,14 @@
       const d = new Date(year, month, day);
       const dKey = toKey(d);
       const isFuture = d > today;
-      const beforeCreation = d < createdAt;
+      // Deliberately allow marking days before the habit was created in the
+      // app — the real-world habit (e.g. "pay rent on the 1st") may predate
+      // when you got around to adding it here, and you should still be able
+      // to backfill that history. Only the future is off-limits.
       const done = isDone(h, dKey);
       const scheduled = isScheduled(h, d);
       const isToday = dKey === todayKey();
-      const disabled = isFuture || beforeCreation;
-      cellsHtml += `<button type="button" class="cal-cell ${done ? "done" : ""} ${!scheduled && !done ? "unscheduled" : ""} ${isToday ? "today" : ""}" data-cal-date="${dKey}" ${disabled ? "disabled" : ""}>${day}</button>`;
+      cellsHtml += `<button type="button" class="cal-cell ${done ? "done" : ""} ${!scheduled && !done ? "unscheduled" : ""} ${isToday ? "today" : ""}" data-cal-date="${dKey}" ${isFuture ? "disabled" : ""}>${day}</button>`;
     }
     $("#statsCalendar").innerHTML = cellsHtml;
     $("#statsCalendar").querySelectorAll("[data-cal-date]").forEach((btn) => {
