@@ -204,6 +204,9 @@
      Habit logic
   --------------------------------------------------------- */
   function isScheduled(habit, date) {
+    if (habit.frequency === "monthly") {
+      return (habit.monthDays || []).includes(date.getDate());
+    }
     return habit.days.includes(dayOfWeek(date));
   }
 
@@ -707,6 +710,8 @@
   let selectedEmoji = EMOJIS[0];
   let selectedColor = COLORS[0];
   let selectedDays = [0, 1, 2, 3, 4, 5, 6];
+  let selectedFrequency = "weekly"; // "weekly" | "monthly"
+  let selectedMonthDays = [1];
 
   function buildEmojiPicker() {
     const el = $("#emojiPicker");
@@ -761,6 +766,54 @@
     });
   }
 
+  function buildMonthDayPicker() {
+    const el = $("#monthDayPicker");
+    el.innerHTML = Array.from({ length: 31 }).map((_, i) => {
+      const day = i + 1;
+      return `<button type="button" class="month-day-opt" data-month-day="${day}">${day}</button>`;
+    }).join("");
+    el.querySelectorAll(".month-day-opt").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const day = Number(btn.dataset.monthDay);
+        if (selectedMonthDays.includes(day)) {
+          selectedMonthDays = selectedMonthDays.filter((d) => d !== day);
+        } else {
+          selectedMonthDays.push(day);
+        }
+        syncMonthDayPicker();
+      });
+    });
+  }
+  function syncMonthDayPicker() {
+    $("#monthDayPicker").querySelectorAll(".month-day-opt").forEach((b) => {
+      b.classList.toggle("selected", selectedMonthDays.includes(Number(b.dataset.monthDay)));
+    });
+  }
+
+  function syncFreqToggle() {
+    $("#freqToggle").querySelectorAll(".freq-opt").forEach((b) => {
+      b.classList.toggle("selected", b.dataset.freq === selectedFrequency);
+    });
+    $("#weeklyField").hidden = selectedFrequency !== "weekly";
+    $("#monthlyField").hidden = selectedFrequency !== "monthly";
+  }
+
+  $("#freqToggle").querySelectorAll(".freq-opt").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      selectedFrequency = btn.dataset.freq;
+      syncFreqToggle();
+    });
+  });
+
+  $("#presetOnce").addEventListener("click", () => {
+    selectedMonthDays = [1];
+    syncMonthDayPicker();
+  });
+  $("#presetTwice").addEventListener("click", () => {
+    selectedMonthDays = [1, 15];
+    syncMonthDayPicker();
+  });
+
   function openModal(id) {
     editingId = id || null;
     const h = id ? habits.find((x) => x.id === id) : null;
@@ -769,12 +822,16 @@
     $("#habitName").value = h ? h.name : "";
     selectedEmoji = h ? h.emoji : EMOJIS[Math.floor(Math.random() * EMOJIS.length)];
     selectedColor = h ? h.color : COLORS[habits.length % COLORS.length];
-    selectedDays = h ? [...h.days] : [0, 1, 2, 3, 4, 5, 6];
+    selectedFrequency = h && h.frequency === "monthly" ? "monthly" : "weekly";
+    selectedDays = h && h.days && h.days.length ? [...h.days] : [0, 1, 2, 3, 4, 5, 6];
+    selectedMonthDays = h && h.monthDays && h.monthDays.length ? [...h.monthDays] : [1];
     $("#deleteHabitBtn").hidden = !h;
 
     syncEmojiPicker();
     syncColorPicker();
+    syncFreqToggle();
     syncDayPicker();
+    syncMonthDayPicker();
 
     overlay.hidden = false;
     setTimeout(() => $("#habitName").focus(), 50);
@@ -790,17 +847,26 @@
     e.preventDefault();
     const name = $("#habitName").value.trim();
     if (!name) return;
-    if (selectedDays.length === 0) {
+    if (selectedFrequency === "weekly" && selectedDays.length === 0) {
       showToast("Pick at least one day");
       return;
     }
+    if (selectedFrequency === "monthly" && selectedMonthDays.length === 0) {
+      showToast("Pick at least one day of the month");
+      return;
+    }
+
+    const days = selectedFrequency === "weekly" ? [...selectedDays] : [];
+    const monthDays = selectedFrequency === "monthly" ? [...selectedMonthDays] : [];
 
     if (editingId) {
       const h = habits.find((x) => x.id === editingId);
       h.name = name;
       h.emoji = selectedEmoji;
       h.color = selectedColor;
-      h.days = [...selectedDays];
+      h.frequency = selectedFrequency;
+      h.days = days;
+      h.monthDays = monthDays;
       h.updatedAt = Date.now();
     } else {
       habits.push({
@@ -808,7 +874,9 @@
         name,
         emoji: selectedEmoji,
         color: selectedColor,
-        days: [...selectedDays],
+        frequency: selectedFrequency,
+        days,
+        monthDays,
         createdAt: todayKey(),
         updatedAt: Date.now(),
         log: {},
@@ -1480,6 +1548,7 @@
     buildEmojiPicker();
     buildColorPicker();
     buildDayPicker();
+    buildMonthDayPicker();
 
     const savedTheme = load(THEME_KEY, null) || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
     applyTheme(savedTheme);
