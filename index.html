@@ -158,8 +158,25 @@
       </label>
 
       <label class="field">
+        <span>Frequency</span>
+        <div id="freqToggle" class="freq-toggle">
+          <button type="button" class="freq-opt" data-freq="weekly">Weekly</button>
+          <button type="button" class="freq-opt" data-freq="monthly">Monthly</button>
+        </div>
+      </label>
+
+      <label class="field" id="weeklyField">
         <span>Repeat on</span>
         <div id="dayPicker" class="day-picker"></div>
+      </label>
+
+      <label class="field" id="monthlyField" hidden>
+        <span>Repeat on (day of month)</span>
+        <div class="month-presets">
+          <button type="button" id="presetOnce" class="btn-ghost month-preset-btn">Once a month</button>
+          <button type="button" id="presetTwice" class="btn-ghost month-preset-btn">Twice a month</button>
+        </div>
+        <div id="monthDayPicker" class="month-day-picker"></div>
       </label>
 
       <div class="modal-actions">
