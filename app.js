@@ -309,6 +309,99 @@
     return count;
   }
 
+  function longestStreakEver() {
+    return habits.reduce((max, h) => Math.max(max, longestStreakForHabit(h)), 0);
+  }
+
+  /* ---------------------------------------------------------
+     Analytics — all derived live from habits/log data, nothing extra stored.
+  --------------------------------------------------------- */
+  function last30DaysCompletion() {
+    const points = [];
+    for (let i = 29; i >= 0; i--) {
+      const d = daysAgo(i);
+      const key = toKey(d);
+      const scheduled = habits.filter((h) => isScheduled(h, d) && h.createdAt <= key);
+      const done = scheduled.filter((h) => isDone(h, key)).length;
+      points.push({
+        date: key,
+        scheduled: scheduled.length,
+        done,
+        pct: scheduled.length ? Math.round((done / scheduled.length) * 100) : null,
+      });
+    }
+    return points;
+  }
+
+  function avgCompletionLastNDays(n) {
+    const points = last30DaysCompletion().slice(30 - n);
+    const withData = points.filter((p) => p.pct !== null);
+    if (withData.length === 0) return 0;
+    return Math.round(withData.reduce((sum, p) => sum + p.pct, 0) / withData.length);
+  }
+
+  function perHabitCompletion() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return habits
+      .map((h) => {
+        let scheduled = 0;
+        let done = 0;
+        for (let cursor = new Date(parseKey(h.createdAt)); cursor <= today; cursor.setDate(cursor.getDate() + 1)) {
+          if (!isScheduled(h, cursor)) continue;
+          scheduled++;
+          if (isDone(h, toKey(cursor))) done++;
+        }
+        return { habit: h, scheduled, done, pct: scheduled ? Math.round((done / scheduled) * 100) : 0 };
+      })
+      .sort((a, b) => b.pct - a.pct);
+  }
+
+  function dayOfWeekPerformance() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const buckets = Array.from({ length: 7 }, () => ({ scheduled: 0, done: 0 }));
+    habits.forEach((h) => {
+      for (let cursor = new Date(parseKey(h.createdAt)); cursor <= today; cursor.setDate(cursor.getDate() + 1)) {
+        if (!isScheduled(h, cursor)) continue;
+        const bucket = buckets[dayOfWeek(cursor)];
+        bucket.scheduled++;
+        if (isDone(h, toKey(cursor))) bucket.done++;
+      }
+    });
+    return buckets.map((b, i) => ({
+      label: DAY_LABELS[i],
+      scheduled: b.scheduled,
+      done: b.done,
+      pct: b.scheduled ? Math.round((b.done / b.scheduled) * 100) : 0,
+    }));
+  }
+
+  function activityHeatmap(weeks) {
+    const days = weeks * 7;
+    const cells = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = daysAgo(i);
+      const key = toKey(d);
+      const scheduled = habits.filter((h) => isScheduled(h, d) && h.createdAt <= key);
+      const done = scheduled.filter((h) => isDone(h, key)).length;
+      cells.push({
+        date: key,
+        pct: scheduled.length ? done / scheduled.length : null,
+      });
+    }
+    return cells;
+  }
+
+  function heatmapLevel(pct) {
+    if (pct === null) return 0;
+    if (pct <= 0) return 0;
+    if (pct < 0.4) return 1;
+    if (pct < 0.7) return 2;
+    if (pct < 1) return 3;
+    return 4;
+  }
+
   /* ---------------------------------------------------------
      Rendering
   --------------------------------------------------------- */
@@ -997,6 +1090,112 @@
   });
   $("#statsCloseBtn").addEventListener("click", closeStatsModal);
   statsOverlay.addEventListener("click", (e) => { if (e.target === statsOverlay) closeStatsModal(); });
+
+  /* ---------------------------------------------------------
+     Analytics screen
+  --------------------------------------------------------- */
+  const analyticsScreen = $("#analyticsScreen");
+  const HEATMAP_WEEKS = 16;
+
+  function renderTrendChart() {
+    const points = last30DaysCompletion();
+    const svg = $("#trendChart");
+    const w = 300;
+    const h = 100;
+    const pad = 6;
+
+    const coords = points.map((p, i) => {
+      const x = (i / (points.length - 1)) * w;
+      const pct = p.pct === null ? 0 : p.pct;
+      const y = pad + (1 - pct / 100) * (h - pad * 2);
+      return { x, y, has: p.pct !== null };
+    });
+
+    const linePath = coords.map((c, i) => `${i === 0 ? "M" : "L"}${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
+    const areaPath = `${linePath} L${w},${h} L0,${h} Z`;
+
+    const dots = coords
+      .map((c, i) => (points[i].pct !== null
+        ? `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="2.2" fill="#7c5cff" />`
+        : ""))
+      .join("");
+
+    svg.innerHTML = `
+      <defs>
+        <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#7c5cff" stop-opacity="0.35" />
+          <stop offset="100%" stop-color="#7c5cff" stop-opacity="0" />
+        </linearGradient>
+      </defs>
+      <path d="${areaPath}" fill="url(#trendFill)" stroke="none" />
+      <path d="${linePath}" fill="none" stroke="#7c5cff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      ${dots}
+    `;
+  }
+
+  function renderHabitBars() {
+    const rows = perHabitCompletion();
+    const el = $("#habitBars");
+    if (rows.length === 0) {
+      el.innerHTML = `<p class="sync-hint">No habits yet.</p>`;
+      return;
+    }
+    el.innerHTML = rows.map((r) => `
+      <div class="habit-bar-row">
+        <div class="habit-bar-top">
+          <span class="habit-bar-name">${r.habit.emoji} ${escapeHtml(r.habit.name)}</span>
+          <span class="habit-bar-pct">${r.pct}%</span>
+        </div>
+        <div class="habit-bar-track">
+          <div class="habit-bar-fill" style="width:${r.pct}%;background:${r.habit.color}"></div>
+        </div>
+      </div>
+    `).join("");
+  }
+
+  function renderDowChart() {
+    const buckets = dayOfWeekPerformance();
+    const el = $("#dowChart");
+    el.innerHTML = buckets.map((b) => `
+      <div class="dow-col">
+        <div class="dow-bar-track"><div class="dow-bar" style="height:${Math.max(b.pct, b.scheduled ? 4 : 0)}%" title="${b.label}: ${b.pct}% (${b.done}/${b.scheduled})"></div></div>
+        <span class="dow-label">${b.label}</span>
+      </div>
+    `).join("");
+  }
+
+  function renderHeatmap() {
+    const cells = activityHeatmap(HEATMAP_WEEKS);
+    const el = $("#heatmapGrid");
+    el.innerHTML = cells.map((c) => {
+      const level = heatmapLevel(c.pct);
+      const pctLabel = c.pct === null ? "no habits scheduled" : `${Math.round(c.pct * 100)}% done`;
+      return `<div class="heatmap-cell level-${level}" title="${c.date}: ${pctLabel}"></div>`;
+    }).join("");
+  }
+
+  function renderAnalytics() {
+    const hasHabits = habits.length > 0;
+    $("#analyticsEmpty").hidden = hasHabits;
+    $("#analyticsContent").hidden = !hasHabits;
+    if (!hasHabits) return;
+
+    $("#anaTotalHabits").textContent = habits.length;
+    $("#anaTotalCheckins").textContent = totalCheckins();
+    $("#anaLongestStreak").textContent = longestStreakEver();
+    $("#anaAvg30").textContent = `${avgCompletionLastNDays(30)}%`;
+
+    renderTrendChart();
+    renderHabitBars();
+    renderDowChart();
+    renderHeatmap();
+  }
+
+  $("#analyticsToggle").addEventListener("click", () => {
+    analyticsScreen.hidden = false;
+    renderAnalytics();
+  });
+  $("#analyticsBackBtn").addEventListener("click", () => { analyticsScreen.hidden = true; });
 
   /* ---------------------------------------------------------
      Theme
