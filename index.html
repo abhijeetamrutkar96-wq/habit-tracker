@@ -26,6 +26,7 @@
       <span class="brand-name">Momentum</span>
     </div>
     <div class="topbar-actions">
+      <button id="analyticsToggle" class="icon-btn" title="Analytics" aria-label="Analytics">📈</button>
       <button id="usersToggle" class="icon-btn" title="Manage users on this device" aria-label="Manage users on this device" hidden>👥</button>
       <button id="syncToggle" class="icon-btn" title="Sync settings" aria-label="Sync settings">☁️</button>
       <button id="themeToggle" class="icon-btn" title="Toggle theme" aria-label="Toggle theme">🌙</button>
@@ -315,6 +316,79 @@
       <button type="submit" id="authSubmitBtn" class="btn-primary auth-submit" data-label="Log in">Log in</button>
     </form>
     <p class="auth-footnote">This is a simple password gate between people who already trust each other — not bank-grade security.</p>
+  </div>
+</div>
+
+<!-- Analytics Screen -->
+<div id="analyticsScreen" class="analytics-screen" hidden>
+  <header class="analytics-header">
+    <button id="analyticsBackBtn" class="icon-btn" aria-label="Back to dashboard">←</button>
+    <h2>Analytics</h2>
+    <span class="analytics-header-spacer"></span>
+  </header>
+
+  <div class="analytics-body">
+    <div id="analyticsEmpty" class="empty-state" hidden>
+      <p>📊 Nothing to analyze yet</p>
+      <span>Add a habit and start checking it off — your charts will show up here.</span>
+    </div>
+
+    <div id="analyticsContent">
+      <div class="analytics-stats-grid">
+        <div class="stats-tile">
+          <span id="anaTotalHabits" class="stats-tile-num">0</span>
+          <span class="stats-tile-label">Active habits</span>
+        </div>
+        <div class="stats-tile">
+          <span id="anaTotalCheckins" class="stats-tile-num">0</span>
+          <span class="stats-tile-label">📈 Total check-ins</span>
+        </div>
+        <div class="stats-tile">
+          <span id="anaLongestStreak" class="stats-tile-num">0</span>
+          <span class="stats-tile-label">🏆 Longest streak ever</span>
+        </div>
+        <div class="stats-tile">
+          <span id="anaAvg30" class="stats-tile-num">0%</span>
+          <span class="stats-tile-label">📅 Avg. last 30 days</span>
+        </div>
+      </div>
+
+      <section class="analytics-section">
+        <h3>Last 30 days</h3>
+        <div class="card trend-card">
+          <svg id="trendChart" viewBox="0 0 300 110" preserveAspectRatio="none" class="trend-svg"></svg>
+          <div class="trend-labels"><span>30 days ago</span><span>Today</span></div>
+        </div>
+      </section>
+
+      <section class="analytics-section">
+        <h3>By habit</h3>
+        <div id="habitBars" class="card habit-bars"></div>
+      </section>
+
+      <section class="analytics-section">
+        <h3>By day of week</h3>
+        <div class="card dow-card">
+          <div id="dowChart" class="dow-chart"></div>
+        </div>
+      </section>
+
+      <section class="analytics-section">
+        <h3>Activity</h3>
+        <div class="card heatmap-card">
+          <div id="heatmapGrid" class="heatmap-grid"></div>
+          <div class="heatmap-legend">
+            <span>Less</span>
+            <span class="heatmap-cell level-0"></span>
+            <span class="heatmap-cell level-1"></span>
+            <span class="heatmap-cell level-2"></span>
+            <span class="heatmap-cell level-3"></span>
+            <span class="heatmap-cell level-4"></span>
+            <span>More</span>
+          </div>
+        </div>
+      </section>
+    </div>
   </div>
 </div>
 
